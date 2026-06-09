@@ -1,6 +1,7 @@
-# Dev:      Renery Carvalho
-# Data:     on going
-# Contact:  reneryroniery@gmail.com / rnyc@novonordisk.com
+# Author:           Renery Carvalho
+# Creation Date:    2025-02-03
+# Last Update:      2026-05-02
+# Email:            reneryroniery@gmail.com
 
 import math
 from typing import Union, Tuple
@@ -21,10 +22,33 @@ import json
 import sqlite3
 import pyodbc
 import warnings
+from typing import Dict, Any
+import statsmodels.api as sm
+from statsmodels.stats.outliers_influence import variance_inflation_factor
+import statsmodels.stats.contingency_tables as ct
+from statsmodels.tsa.seasonal import seasonal_decompose, STL
+from statsmodels.tsa.arima.model import ARIMA
+from statsmodels.tsa.statespace.sarimax import SARIMAX
+from statsmodels.tsa.holtwinters import ExponentialSmoothing
+from sklearn.feature_selection import f_classif, f_regression, mutual_info_classif, mutual_info_regression, SelectKBest
+
 """warnings.filterwarnings('ignore')"""
 
+#===========> Helpers
+def _validate_1d_array(data, name="sample_data") -> np.ndarray:
+    if isinstance(data, pd.DataFrame):
+        if data.shape[1] != 1:
+            raise ValueError(f"Error! {name} must be 1D array like.")
+        return data.iloc[:,0].values
+    elif isinstance(data, pd.Series):
+        return data.values
+    elif isinstance(data, (list, np.ndarray)):
+        return np.array(data).ravel()
+    else:
+        raise TypeError(f"Error! {name} must be array-like.")
+
 #===========> Data extraction, loading and transformation
-def extract_data(file_path, **kwargs):
+def extract_data(file_path, **kwargs) -> pd.DataFrame:
     """
     =============================> Brief Description <===========================
     -----------------------------------------------------------------------------
@@ -146,7 +170,7 @@ def transform_data(df):
     pass
 
 #===========> Descriptive Analysis
-def basic_statistics(df):
+def basic_statistics(df) -> Dict[str, Any]:
     """
     =============================> Brief Description <===========================
     -----------------------------------------------------------------------------
@@ -300,7 +324,7 @@ def basic_statistics(df):
     return results
 
 #===========> Verifying normality Analysis
-def normality_tests(df, methodology='all', alpha=0.05):
+def normality_tests(df, methodology='all', alpha=0.05) -> Dict[str, Any]:
     """
     =============================> Brief Description <===========================
     -----------------------------------------------------------------------------
@@ -482,7 +506,7 @@ def normality_tests(df, methodology='all', alpha=0.05):
     return results
 
 #===========> Correlation Analysis
-def correlation_analysis(df, target, methodology='pearson'):
+def correlation_analysis(df, target, methodology='pearson') -> Dict[str, Any]:
     """
     =============================> Brief Description <===========================
     -----------------------------------------------------------------------------
@@ -535,13 +559,13 @@ def correlation_analysis(df, target, methodology='pearson'):
 
     print("\n=====> Correlation Analysis w/o Outliers <=====")
     # Removing outliers with Z-score method
-    df_wo_outliers = df[(np.abs(np.zscore(df[numerical_columns])) < 3).all(axis=1)]
+    df_wo_outliers = df[(np.abs(zscore(df[numerical_columns])) < 3).all(axis=1)]
     if len(numerical_columns) > 1:
         print(f"\n===> {methodology.capitalize()} Correlation Matrix")
         correlation_matrix_wo = df_wo_outliers[numerical_columns].corr(method=methodology)
         print(correlation_matrix_wo)
 
-        plt.figure(fisize=(10, 8))
+        plt.figure(figsize=(10, 8))
         sns.heatmap(correlation_matrix_wo, annot=True, cmap='coolwarm', fmt='.2f')
         plt.title(f"{methodology.capitalize()} Correlation Matrix (w/o outliers)")
         plt.show()
@@ -599,7 +623,7 @@ def correlation_analysis(df, target, methodology='pearson'):
                 }
     
 #===========> Outliers Detection
-def outliers_detection(df, methodology='z-score'):
+def outliers_detection(df, methodology='z-score') -> Dict[str, Any]:
     """
     =============================> Brief Description <===========================
     -----------------------------------------------------------------------------
@@ -736,53 +760,74 @@ def outliers_detection(df, methodology='z-score'):
     return results
 
 #===========> Probabilistic Analysis
-def probability_distributions(df): # (NOT IMPLEMENTED)
+def probability_distributions(data) -> Dict[str, Any]:
     """
-    Fit the dataset features to various probability distributions, print the results and plot the
-    distributions.
-
-    >> Normal Distribution (c.r.v)
-        - symmetric, bell-shaped distribution
-        - defined by mean and standard deviation
-
-    >> Exponential Distribution (c.r.v)
-        - used for modeling time until an event occurs
-        - defined by rate parameter
-
-    >> Poisson Distribution (d.r.v)
-        - used for modeling count data
-        - defined by rate parameter
-
-    >> Binomial Distribution (d.r.v)
-        - used for modeling binary outcomes
-        - defined by number of trials and probability of success
+    Fit the data to various continuous probability distributions (Normal, Exponential, Log-Normal, Weibull, Gamma),
+    plot the histograms with the fitted PDFs, and return the best-fitting distribution based on the Sum of Squared Errors (SSE).
+    """
+    data = _validate_1d_array(data, "data")
     
-    >> Bernoulli Distribution (d.r.v)
-        - used for modeling binary outcomes
-        - defined by probability of success
-        - special case of the binomial distribution with one trial
-
-    >> Discrete Uniform Distribution (d.r.v)
-        - all outcomes are equally likely
-        - defined by minimum and maximum values
-
-    >> Log-Normal Distribution (c.r.v)
-        - used for modeling positively skewed data
-        - defined by mean and standard deviation of the logarithm of the variable
-
-    >> Weibull Distribution (c.r.v)
-        - used for modeling life data and reliability analysis
-        - defined by shape and scale parameters
-
-    >> Beta Distribution
-        - used for modeling proportions and probabilities
-        - defined by two shape parameters
-    """
-    pass
+    distributions = {
+        'Normal': stats.norm,
+        'Exponential': stats.expon,
+        'Log-Normal': stats.lognorm,
+        'Weibull': stats.weibull_min,
+        'Gamma': stats.gamma
+    }
+    
+    results = {}
+    best_dist = None
+    best_sse = np.inf
+    
+    # Calculate histogram for SSE
+    y, x = np.histogram(data, bins='auto', density=True)
+    x = (x + np.roll(x, -1))[:-1] / 2.0
+    
+    plt.figure(figsize=(12, 8))
+    plt.hist(data, bins='auto', density=True, alpha=0.5, label='Data', color='gray')
+    
+    x_plot = np.linspace(np.min(data), np.max(data), 1000)
+    
+    for name, dist in distributions.items():
+        try:
+            # Fit distribution
+            params = dist.fit(data)
+            
+            # Calculate SSE
+            pdf = dist.pdf(x, *params)
+            sse = np.sum(np.power(y - pdf, 2))
+            
+            results[name] = {
+                'params': params,
+                'sse': sse
+            }
+            
+            if sse < best_sse:
+                best_sse = sse
+                best_dist = name
+                
+            # Plot
+            pdf_plot = dist.pdf(x_plot, *params)
+            plt.plot(x_plot, pdf_plot, label=f"{name} (SSE: {sse:.4f})")
+            
+        except Exception as e:
+            results[name] = {'error': str(e)}
+            
+    plt.title(f"Probability Distributions Fit (Best: {best_dist})")
+    plt.xlabel("Value")
+    plt.ylabel("Density")
+    plt.legend()
+    plt.show()
+    
+    return {
+        'best_fit': best_dist,
+        'best_sse': best_sse,
+        'fits': results
+    }
 
 #===========> Hypothesis Testing and Confidence Intervals
 # Parametric tests
-def test_population_mean(sample_data, population_mean, population_std=None, alpha=0.05, alternative='two-sided'):
+def test_population_mean(sample_data, population_mean, population_std=None, alpha=0.05, alternative='two-sided') -> Dict[str, Any]:
     """
     =============================> Brief Description <===========================
     -----------------------------------------------------------------------------
@@ -994,7 +1039,7 @@ def test_population_mean(sample_data, population_mean, population_std=None, alph
 
     return results
 
-def test_population_proportion(sample_data, hypothetical_proportion, alpha=0.05, alternative='two-sided'):
+def test_population_proportion(sample_data, hypothetical_proportion, alpha=0.05, alternative='two-sided') -> Dict[str, Any]:
     """
     =============================> Brief Description <===========================
     -----------------------------------------------------------------------------
@@ -1133,7 +1178,7 @@ def test_population_proportion(sample_data, hypothetical_proportion, alpha=0.05,
     print(results)
     return results
 
-def test_population_variance(sample_data, hypothetical_variance, alpha=0.05, alternative='two-sided'):
+def test_population_variance(sample_data, hypothetical_variance, alpha=0.05, alternative='two-sided') -> Dict[str, Any]:
     """
     =============================> Brief Description <===========================
     -----------------------------------------------------------------------------
@@ -1555,7 +1600,7 @@ def test_2independent_mean(sample1, sample2, pop_std1=None, pop_std2=None, alpha
         'conclusion': conclusion
     }
 
-def test_2paired_mean(before, after, alpha=0.05, alternative='two-sided'):
+def test_2paired_mean(before, after, alpha=0.05, alternative='two-sided') -> Dict[str, Any]:
     """
     =============================> Brief Description <===========================
     -----------------------------------------------------------------------------
@@ -1748,7 +1793,7 @@ def test_2paired_mean(before, after, alpha=0.05, alternative='two-sided'):
     }
     return results
 
-def test_2independent_proportion(sample1, sample2, alpha=0.05, alternative='two-sided'):
+def test_2independent_proportion(sample1, sample2, alpha=0.05, alternative='two-sided') -> Dict[str, Any]:
     """
     =============================> Brief Description <===========================
     -----------------------------------------------------------------------------
@@ -1945,7 +1990,7 @@ def test_2independent_proportion(sample1, sample2, alpha=0.05, alternative='two-
     print(results)
     return results
 
-def test_2population_variance(sample1, sample2, alpha=0.05, alternative='two-sided'):
+def test_2population_variance(sample1, sample2, alpha=0.05, alternative='two-sided') -> Dict[str, Any]:
     """
     =============================> Brief Description <===========================
     -----------------------------------------------------------------------------
@@ -2159,7 +2204,7 @@ def test_2population_variance(sample1, sample2, alpha=0.05, alternative='two-sid
     print(results)
     return results
 
-def test_1way_anova(samples, alpha=0.05): # (IMPLEMENTATION ON GOING)
+def test_1way_anova(samples, alpha=0.05) -> Dict[str, Any]:
 
     """
     =============================> Brief Description <===========================
@@ -2529,26 +2574,171 @@ def test_1way_anova(samples, alpha=0.05): # (IMPLEMENTATION ON GOING)
     return results
 
 # Non-parametric tests
-def independent_chisquare_test():# (NOT IMPLEMENTED)
-    pass
+def independent_chisquare_test(contingency_table, alpha=0.05) -> Dict[str, Any]:
+    """
+    Perform Chi-square test of independence of variables in a contingency table.
+    """
+    if isinstance(contingency_table, pd.DataFrame):
+        contingency_table = contingency_table.values
+    stat, p_value, dof, expected = stats.chi2_contingency(contingency_table)
+    reject_null = p_value < alpha
+    
+    plt.figure(figsize=(8, 6))
+    sns.heatmap(contingency_table, annot=True, fmt='g', cmap='Blues', cbar=False)
+    plt.title(f"Chi-Square Test (p={p_value:.4f})")
+    plt.show()
+    
+    return {
+        'statistic': stat,
+        'p_value': p_value,
+        'alpha': alpha,
+        'reject_null': bool(reject_null),
+        'method_used': 'Chi-Square Test of Independence'
+    }
 
-def independent_exact_fisher():# (NOT IMPLEMENTED)
-    pass
+def independent_exact_fisher(contingency_table, alpha=0.05) -> Dict[str, Any]:
+    """
+    Perform Fisher exact test on a 2x2 contingency table.
+    """
+    if isinstance(contingency_table, pd.DataFrame):
+        contingency_table = contingency_table.values
+    if contingency_table.shape != (2, 2):
+        raise ValueError("Fisher's Exact Test requires a 2x2 contingency table.")
+    stat, p_value = stats.fisher_exact(contingency_table)
+    reject_null = p_value < alpha
+    
+    plt.figure(figsize=(6, 4))
+    sns.heatmap(contingency_table, annot=True, fmt='g', cmap='Oranges', cbar=False)
+    plt.title(f"Fisher's Exact Test (p={p_value:.4f})")
+    plt.show()
+    
+    return {
+        'statistic': stat,
+        'p_value': p_value,
+        'alpha': alpha,
+        'reject_null': bool(reject_null),
+        'method_used': "Fisher's Exact Test"
+    }
 
-def dependent_mcnemar():# (NOT IMPLEMENTED)
-    pass
+def dependent_mcnemar(contingency_table, alpha=0.05) -> Dict[str, Any]:
+    """
+    Perform McNemar's test on a 2x2 contingency table.
+    """
+    if isinstance(contingency_table, pd.DataFrame):
+        contingency_table = contingency_table.values
+    import statsmodels.stats.contingency_tables as ct
+    table = ct.Table2x2(contingency_table)
+    res = table.homogeneity() # McNemar test
+    p_value = res.pvalue
+    stat = res.statistic
+    reject_null = p_value < alpha
+    
+    plt.figure(figsize=(6, 4))
+    sns.heatmap(contingency_table, annot=True, fmt='g', cmap='Greens', cbar=False)
+    plt.title(f"McNemar's Test (p={p_value:.4f})")
+    plt.show()
 
-def paired_wilcoxon():# (NOT IMPLEMENTED)
-    pass
+    return {
+        'statistic': stat,
+        'p_value': p_value,
+        'alpha': alpha,
+        'reject_null': bool(reject_null),
+        'method_used': "McNemar's Test"
+    }
 
-def independent_mannwhitneyu():# (NOT IMPLEMENTED)
-    pass
+def paired_wilcoxon(sample1, sample2, alpha=0.05, alternative='two-sided') -> Dict[str, Any]:
+    """
+    Perform the Wilcoxon signed-rank test.
+    """
+    sample1 = _validate_1d_array(sample1, "sample1")
+    sample2 = _validate_1d_array(sample2, "sample2")
+    stat, p_value = stats.wilcoxon(sample1, sample2, alternative=alternative)
+    reject_null = p_value < alpha
+    
+    plt.figure(figsize=(8, 6))
+    data = [sample1, sample2]
+    plt.boxplot(data, labels=['Sample 1', 'Sample 2'])
+    plt.title(f"Wilcoxon Signed-Rank Test (p={p_value:.4f})")
+    plt.ylabel("Values")
+    for i in range(min(len(sample1), 100)): # plot up to 100 lines so it doesn't freeze
+        plt.plot([1, 2], [sample1[i], sample2[i]], color='gray', alpha=0.2)
+    plt.show()
+    
+    return {
+        'statistic': stat,
+        'p_value': p_value,
+        'alpha': alpha,
+        'reject_null': bool(reject_null),
+        'method_used': 'Wilcoxon Signed-Rank Test'
+    }
 
-def kruskal_wallis_test():# (NOT IMPLEMENTED)
-    pass
+def independent_mannwhitneyu(sample1, sample2, alpha=0.05, alternative='two-sided') -> Dict[str, Any]:
+    """
+    Perform the Mann-Whitney U rank test on two independent samples.
+    """
+    sample1 = _validate_1d_array(sample1, "sample1")
+    sample2 = _validate_1d_array(sample2, "sample2")
+    stat, p_value = stats.mannwhitneyu(sample1, sample2, alternative=alternative)
+    reject_null = p_value < alpha
+    
+    plt.figure(figsize=(8, 6))
+    data = [sample1, sample2]
+    plt.boxplot(data, labels=['Sample 1', 'Sample 2'])
+    plt.title(f"Mann-Whitney U Test (p={p_value:.4f})")
+    plt.ylabel("Values")
+    plt.show()
+    
+    return {
+        'statistic': stat,
+        'p_value': p_value,
+        'alpha': alpha,
+        'reject_null': bool(reject_null),
+        'method_used': 'Mann-Whitney U Test'
+    }
 
-def friedman_test():# (NOT IMPLEMENTED)
-    pass
+def kruskal_wallis_test(*samples, alpha=0.05) -> Dict[str, Any]:
+    """
+    Perform the Kruskal-Wallis H-test for independent samples.
+    """
+    validated_samples = [_validate_1d_array(s, f"sample_{i+1}") for i, s in enumerate(samples)]
+    stat, p_value = stats.kruskal(*validated_samples)
+    reject_null = p_value < alpha
+    
+    plt.figure(figsize=(10, 6))
+    plt.boxplot(validated_samples, labels=[f"Sample {i+1}" for i in range(len(samples))])
+    plt.title(f"Kruskal-Wallis H-test (p={p_value:.4f})")
+    plt.ylabel("Values")
+    plt.show()
+    
+    return {
+        'statistic': stat,
+        'p_value': p_value,
+        'alpha': alpha,
+        'reject_null': bool(reject_null),
+        'method_used': 'Kruskal-Wallis H-test'
+    }
+
+def friedman_test(*samples, alpha=0.05) -> Dict[str, Any]:
+    """
+    Perform the Friedman test for repeated measurements.
+    """
+    validated_samples = [_validate_1d_array(s, f"sample_{i+1}") for i, s in enumerate(samples)]
+    stat, p_value = stats.friedmanchisquare(*validated_samples)
+    reject_null = p_value < alpha
+    
+    plt.figure(figsize=(10, 6))
+    plt.boxplot(validated_samples, labels=[f"Sample {i+1}" for i in range(len(samples))])
+    plt.title(f"Friedman Test (p={p_value:.4f})")
+    plt.ylabel("Values")
+    plt.show()
+    
+    return {
+        'statistic': stat,
+        'p_value': p_value,
+        'alpha': alpha,
+        'reject_null': bool(reject_null),
+        'method_used': 'Friedman Test'
+    }
 
 #===========> Sample Size Calculation
 def sample_size_calculation(method, confidence_level, margin_error, **kwargs) -> Union[int, Tuple[int, dict]]:
@@ -2702,39 +2892,80 @@ def sample_size_calculation(method, confidence_level, margin_error, **kwargs) ->
     except Exception as e:
         raise ValueError(f"Error in calculation: {str(e)}")
 
-#===========> Regression Analysis
-## Linear Regression
-# Linear Regression Model
-def linear_regression(x, y):# (NOT IMPLEMENTED)
-    """
-    Generate a linear regression model
-    """
-    pass
 
-# Multiple Regression Model
-def multiple_regression(x, y):# (NOT IMPLEMENTED)
-    """
-    Generate a multiple regression model
-    """
-    pass
 
-# Diagnostics
-def regression_diagnostics(model):# (NOT IMPLEMENTED)
     """
     Performs complete analysis of residuals, multicolinearity, significant parameters
     """
     pass
 
 # Features selection
-def feature_selection(x, y, method):# (NOT IMPLEMENTED)
+def feature_selection(x, y, method='regression') -> dict:
     """
     Analyses which features contributes the most to the model quality considering numerous indicative
-    metrics
+    metrics such as p-value, F-statistic, information metrics, variance inflation factor (VIF),
+    target correlation, and mutual information.
     """
-    pass
+    if not isinstance(x, pd.DataFrame):
+        x = pd.DataFrame(x)
+    y = _validate_1d_array(y, "y")
+    
+    results = {}
+    
+    # 1. Pearson Correlation with Target
+    correlations = x.apply(lambda col: col.corr(pd.Series(y)))
+    results['Pearson Correlation'] = correlations.to_dict()
+    
+    # 2. ANOVA F-value and p-value
+    if method == 'classification':
+        f_stat, p_val = f_classif(x, y)
+        mi = mutual_info_classif(x, y)
+    else:
+        f_stat, p_val = f_regression(x, y)
+        mi = mutual_info_regression(x, y)
+        
+    results['ANOVA F-Value'] = dict(zip(x.columns, f_stat))
+    results['ANOVA p-Value'] = dict(zip(x.columns, p_val))
+    results['Mutual Information'] = dict(zip(x.columns, mi))
+    
+    # 3. Variance Inflation Factor (VIF)
+    vif_data = {}
+    try:
+        # Add constant for VIF
+        x_vif = sm.add_constant(x)
+        for i in range(x_vif.shape[1]):
+            col_name = x_vif.columns[i]
+            if col_name != 'const':
+                vif_data[col_name] = variance_inflation_factor(x_vif.values, i)
+        results['VIF'] = vif_data
+    except Exception as e:
+        results['VIF'] = f"Could not compute VIF: {str(e)}"
+        
+    # Plotting
+    fig, axes = plt.subplots(2, 2, figsize=(14, 10))
+    fig.suptitle('Feature Selection Metrics')
+    
+    correlations.plot(kind='bar', ax=axes[0, 0], color='skyblue')
+    axes[0, 0].set_title('Pearson Correlation with Target')
+    
+    pd.Series(results['ANOVA F-Value']).plot(kind='bar', ax=axes[0, 1], color='lightgreen')
+    axes[0, 1].set_title('ANOVA F-Value')
+    
+    pd.Series(results['Mutual Information']).plot(kind='bar', ax=axes[1, 0], color='salmon')
+    axes[1, 0].set_title('Mutual Information')
+    
+    if isinstance(vif_data, dict) and len(vif_data) > 0:
+        pd.Series(vif_data).plot(kind='bar', ax=axes[1, 1], color='orange')
+        axes[1, 1].set_title('Variance Inflation Factor (VIF)')
+        axes[1, 1].axhline(y=5, color='r', linestyle='--') # VIF > 5 indicates multicollinearity
+    
+    plt.tight_layout()
+    plt.show()
+
+    return results
 
 ### Time-series Analysis
-def time_series_analysis(df, method):# (NOT IMPLEMENTED)
+def time_series_analysis(df, method, **kwargs) -> Dict[str, Any]:
     """
     Perform time-series analysis on the dataset using the specified method.
 
@@ -2758,55 +2989,62 @@ def time_series_analysis(df, method):# (NOT IMPLEMENTED)
         - decomposes the time series into seasonal, trend, and residual components
         - robust to outliers and non-linear trends
     """
-    pass
+    df = _validate_1d_array(df, "df")
+    
+    results = {}
+    
+    if method == 'Decomposition':
+        period = kwargs.get('period', 12) # Default period
+        res = seasonal_decompose(df, period=period, extrapolate_trend='freq')
+        res.plot()
+        plt.show()
+        results = {'trend': res.trend.tolist(), 'seasonal': res.seasonal.tolist(), 'resid': res.resid.tolist()}
+        return results
+        
+    elif method == 'STL':
+        period = kwargs.get('period', 13)
+        res = STL(df, period=period).fit()
+        res.plot()
+        plt.show()
+        results = {'trend': res.trend.tolist(), 'seasonal': res.seasonal.tolist(), 'resid': res.resid.tolist()}
+        return results
 
-#===========> Reliability Analysis
-# Failure Patterns Analysis
-def failure_patterns_analysis(df, method):# (NOT IMPLEMENTED)
-    """
-    Analyze patterns in equipment failures based on performance metrics such as:
+    plt.figure(figsize=(10, 6))
 
-    >> Mean Time Between Failures (MTBF)
-    >> Mean Time To Repair (MTTR)
-    >> Failure Rate Analysis
-    >> Reliability Function Estimation
-    >> Hazard Rate Analysis
-    """
-    pass
+    if method == 'ARIMA':
+        order = kwargs.get('order', (1, 1, 1))
+        model = ARIMA(df, order=order)
+        fitted = model.fit()
+        plt.plot(df, label='Original')
+        plt.plot(fitted.fittedvalues, color='red', label='Fitted')
+        plt.title(f"ARIMA {order}")
+        results = {'aic': fitted.aic, 'bic': fitted.bic}
 
-# Reliability Metrics Calculation
-def reliability_metrics(df, method):# (NOT IMPLEMENTED)
-    """
-    Calculate key reliability metrics:
+    elif method == 'SARIMA':
+        order = kwargs.get('order', (1, 1, 1))
+        seasonal_order = kwargs.get('seasonal_order', (1, 1, 1, 12))
+        model = SARIMAX(df, order=order, seasonal_order=seasonal_order)
+        fitted = model.fit(disp=False)
+        plt.plot(df, label='Original')
+        plt.plot(fitted.fittedvalues, color='red', label='Fitted')
+        plt.title(f"SARIMA {order}x{seasonal_order}")
+        results = {'aic': fitted.aic, 'bic': fitted.bic}
 
-    >> Availability
-    >> Reliability
-    >> Maintainability
-    >> OEE
-    >> System Reliability
-    """
-    pass
+    elif method == 'Exponential Smoothing':
+        trend = kwargs.get('trend', 'add')
+        seasonal = kwargs.get('seasonal', 'add')
+        seasonal_periods = kwargs.get('seasonal_periods', 12)
+        model = ExponentialSmoothing(df, trend=trend, seasonal=seasonal, seasonal_periods=seasonal_periods)
+        fitted = model.fit()
+        plt.plot(df, label='Original')
+        plt.plot(fitted.fittedvalues, color='red', label='Fitted')
+        plt.title("Exponential Smoothing")
+        results = {'sse': fitted.sse}
 
-# Survival Analysis
-def survival_analysis(df, method):# (NOT IMPLEMENTED)
-    """
-    Perform Survival analysis on equipment:
+    else:
+        plt.close()
+        raise ValueError("Invalid method. Choose from 'Decomposition', 'STL', 'ARIMA', 'SARIMA', 'Exponential Smoothing'.")
 
-    >> Kaplan-Meier Estimation
-    >> Cox Proportional Hazards
-    >> Survival Curves
-    >> Censored Data Analysis
-    """
-    pass
-
-
-    """
-    Analyze spare parts inventory:
-
-    >> Demand Forecasting
-    >> Stock Level Optimization
-    >> Critical Spares Analysis
-    >> Lead Time Analysis
-    >> ABC Analysis
-    """
-    pass
+    plt.legend()
+    plt.show()
+    return results
